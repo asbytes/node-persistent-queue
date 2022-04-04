@@ -29,8 +29,9 @@
  * @property {Object} job An object containing arbitrary data for the job
  */
 
-var EventEmitter = require('events').EventEmitter ;
-var sqlite3 = require('sqlite3').verbose() ;
+import { EventEmitter } from 'events' ;
+import sqlite3 from 'sqlite3' ;
+import { sleep } from './util.js' ;
 
 /**
  * Default queue table name for the sqlite db
@@ -52,17 +53,12 @@ let table_count = 'queue_count' ;
  * Simple SQLite backed Queue for running many short tasks in Node.js
  *
  * @author Damien Clark <damo.clarky@gmail.com>
- * @param {string} [filename=:memory:] Path to sqlite db for queue db
- * @param {number} [batchSize=10] The number of rows from queue db to retrieve at a time
+ * @param {object} [opts] Queue options
  * @constructor
  */
-function PersistentQueue(filename, batchSize) {
+function PersistentQueue(opts) {
 	// Call super-constructor
 	EventEmitter.call(this) ;
-
-	// If filename not provided, then throw error
-	if(filename === undefined)
-		throw new Error('No filename parameter provided') ;
 
 	/**
 	 * Set to true to enable debugging mode
@@ -83,13 +79,13 @@ function PersistentQueue(filename, batchSize) {
 	 * @type {string}
 	 * @access private
 	 */
-	this.dbPath = (filename === '') ? ':memory:' : filename ;
+	this.dbPath = typeof opts !== 'undefined' && typeof opts.store === 'string' ? opts.store : ':memory:' ;
 
 	/**
 	 * How many objects to retrieve from DB into queue array at a time
 	 */
-	this.batchSize = (batchSize === undefined) ? 10 : batchSize ;
-	if(typeof this.batchSize !== 'number' || this.batchSize < 1)
+	this.batchSize = typeof opts !== 'undefined' && opts.batchSize ? opts.batchSize : 10 ;
+	if (typeof this.batchSize !== 'number' || this.batchSize < 1)
 		throw new Error('Invalid batchSize parameter.  Must be a number > 0') ;
 
 	/**
@@ -126,6 +122,20 @@ function PersistentQueue(filename, batchSize) {
 	 * @access private
 	 */
 	this.run = false ;
+
+	/**
+	 * Table name in database
+	 * @type {string}
+	 * @access private
+	 */
+	this.table = typeof opts !== 'undefined' && typeof opts.tableName === 'string' ? opts.tableName : table ;
+
+	/**
+	 * Delay before processing next job in queue
+	 * @type {number}
+	 * @access private
+	 */
+	this.afterProcessDelay = typeof opts !== 'undefined' && typeof opts.afterProcessDelay === 'number' ? opts.afterProcessDelay : 0 ;
 
 	this.on('start', () => {
 		if(this.db === null)
@@ -182,7 +192,7 @@ function PersistentQueue(filename, batchSize) {
 	this.on('empty', () => {
 		this.empty = true ;
 		// Ask sqlite to free up unused space
-		this.db.exec("VACUUM;")
+		this.db.exec('VACUUM;') ;
 	}) ;
 
 	// If a job is added, trigger_next event
@@ -260,6 +270,10 @@ PersistentQueue.prototype.open = function() {
 			BEGIN 
 			UPDATE ${table_count} SET counter = counter - 1 ; 
 			END; 
+
+			PRAGMA synchronous=OFF;
+			PRAGMA journal_mode=WAL;
+			PRAGMA temp_store=MEMORY;
 			` ;
 
 			this.db.exec(query, err => {
@@ -338,7 +352,9 @@ PersistentQueue.prototype.done = function() {
 		if(this.debug) console.log('Job deleted from db') ;
 		// Decrement our job length
 		this.length-- ;
-		this.emit('trigger_next') ;
+
+		this.emit('done') ;
+		sleep(this.afterProcessDelay).then(() => this.emit('trigger_next')) ;
 	})
 	.catch(err => {
 		console.error(err) ;
@@ -532,7 +548,7 @@ function countQueue(q) {
 
 			// Set length property to number of rows in sqlite table
 			q.length = row.counter ;
-			resolve(this.length) ;
+			resolve(q.length) ;
 		}) ;
 	}) ;
 }
@@ -636,4 +652,4 @@ function removeJob(q, id) {
 	}) ;
 }
 
-module.exports = PersistentQueue ;
+export { PersistentQueue } ;

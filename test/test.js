@@ -27,58 +27,45 @@
 
 const debug = false ;
 
-// eslint-disable-next-line no-unused-vars
-const should = require('should') ;
-const sinon = require('sinon') ;
-const os = require('os') ;
-const fs = require('fs') ;
-const path = require('path') ;
-
-require('should-sinon') ;
-
-const Queue = require('../index') ;
-
+import os from 'os' ;
+import fs from 'fs' ;
+import path from 'path' ;
+import {jest} from '@jest/globals' ;
+import { PersistentQueue as Queue } from '../index.js' ;
+ 
 describe('Calling Constructor', () => {
-	it('should use :memory: if file is empty string', done => {
+	it('should use :memory: if file is empty string', async () => {
 		let q = new Queue('') ;
-		q.open().should.be.fulfilled() ;
-		done() ;
-	}) ;
-
-	it('should throw if filename not provided', done => {
-		(() =>{
-			new Queue() ;
-		}).should.throw(Error) ;
-		done() ;
+		expect(async () => await q.open()).not.toThrow() ;
 	}) ;
 
 	it('should throw when passed a batchSize less than 1', () => {
-		(() => {
-			new Queue(':memory:', -1) ;
-		}).should.throw(Error) ;
+		expect(() => {
+			new Queue({store: ':memory:', batchSize: -1}) ;
+		}).toThrowError(Error) ;
 	}) ;
 
 	it('should throw when passed a batchSize that is not a number', () => {
-		(() => {
-			new Queue(':memory:', 'text') ;
-		}).should.throw(Error) ;
+		expect(() => {
+			new Queue({ store: ':memory:', batchSize: 'text'}) ;
+		}).toThrowError(Error) ;
 	}) ;
 }) ;
 
 describe('Correct queue fifo order', () => {
 	let q ;
-	before(done => {
+	beforeAll(done => {
 		// Remove previous db3.sqlite (if exists) before creating db anew
 		fs.unlink('./test/db3.sqlite', () => {
-			q = new Queue('./test/db3.sqlite') ;
+			q = new Queue({store: './test/db3.sqlite'}) ;
 			done() ;
 		}) ;
 	}) ;
 
-	it('should execute jobs in fifo order', done => {
+	it('should execute jobs in fifo order', (done) => {
 		let sequence = 0 ;
 		q.on('next', task => {
-			task.job.sequence.should.equal(sequence++) ;
+			expect(task.job.sequence).toBe(sequence++) ;
 			q.done() ;
 		}) ;
 
@@ -87,8 +74,7 @@ describe('Correct queue fifo order', () => {
 			done() ;
 		}) ;
 
-		q.open()
-		.then(() => {
+		q.open().then(() => {
 			q.start() ;
 
 			for(let i = 0 ; i < 1000 ; ++i) {
@@ -102,32 +88,32 @@ describe('Correct queue fifo order', () => {
 describe('Search remaining jobs', () => {
 	let q ;
 	beforeEach(done => {
-		q = new Queue(':memory:', 10) ;
+		q = new Queue({ store: ':memory:', batchSize: 10}) ;
 		q.open()
 		.then(() => done())
 		.catch(err => done(err)) ;
 	}) ;
 
-	it('should find first job in the queue', done => {
-		q.open()
-		.then(() => {
+	it('should find first job in the queue', async () => {
+		await q.open() ;
 
-			let promises = [] ;
-			for(let i = 1 ; i <= 1000 ; ++i) {
-				let task = {sequence: i % 501} ;
-				promises.push(q.add(task)) ;
-			}
+		let promises = [] ;
+		for(let i = 1 ; i <= 1000 ; ++i) {
+			let task = {sequence: i % 501} ;
+			promises.push(q.add(task)) ;
+		}
 
-			// Wait for all tasks to be added before calling hasJob method to search for it
-			Promise.all(promises)
-			.then(() => {
-				for(let i = 1 ; i <= 500 ; ++i)
-					q.getFirstJobId({sequence: i}).should.be.fulfilledWith(i) ;
-				
-				q.close().then(() => done()) ;
-			})
-			.catch(err => console.log(err)) ;
-		}) ;
+		// Wait for all tasks to be added before calling hasJob method to search for it
+		try {
+			await Promise.all(promises) ;
+			for(let i = 1 ; i <= 500 ; ++i)
+				expect(await q.getFirstJobId({sequence: i})).toBe(i) ;
+			
+			await q.close() ;
+		}
+		catch (err) {
+			console.log(err) ;
+		}
 	}) ;
 
 	it('should find first job in the in-memory queue', done => {
@@ -147,7 +133,7 @@ describe('Search remaining jobs', () => {
 				q.done() ;
 				// Now let's check if all items are
 				for(let i = 1 ; i <= 500 ; ++i)
-					q.getFirstJobId({sequence: i}).should.be.fulfilledWith(i+1) ;
+					q.getFirstJobId({sequence: i}).then(id => expect(id).toBe(i+1)) ;
 				
 				q.close().then(() => done()) ;
 			}) ;
@@ -177,8 +163,12 @@ describe('Search remaining jobs', () => {
 			// Wait for all tasks to be added before calling hasJob method to search for it
 			Promise.all(promises)
 			.then(() =>{
-				for(let i = 1 ; i <= 5 ; ++i)
-					q.getJobIds({sequence: i % 5}).should.be.fulfilledWith([i, i + 5]) ;
+				for(let i = 1 ; i <= 5 ; ++i) {
+					q.getJobIds({sequence: i % 5}).then((ids) => {
+						expect(ids.length).toBe(2) ;
+						expect(ids).toEqual(expect.arrayContaining([i, i + 5])) ;
+					}) ;
+				}
 				
 				q.close().then(() =>{
 					done() ;
@@ -201,8 +191,10 @@ describe('Search remaining jobs', () => {
 			// Wait for all tasks to be added before calling hasJob method to search for it
 			Promise.all(promises)
 			.then(() =>{
-				for(let i = 1 ; i <= 5 ; ++i)
-					q.getJobIds({sequence: 100}).should.be.fulfilledWith([]) ;
+				for(let i = 1 ; i <= 5 ; ++i) {
+					q.getJobIds({sequence: 100}).then(ids => 
+						expect(ids.length).toBe(0)) ;
+				}
 				
 				q.close().then(() =>{
 					done() ;
@@ -225,8 +217,10 @@ describe('Search remaining jobs', () => {
 			// Wait for all tasks to be added before calling hasJob method to search for it
 			Promise.all(promises)
 			.then(() =>{
-				for(let i = 1 ; i <= 5 ; ++i)
-					q.getFirstJobId({sequence: 100}).should.be.fulfilledWith(null) ;
+				for(let i = 1 ; i <= 5 ; ++i) {
+					q.getFirstJobId({sequence: 100}).then(id => 
+						expect(id).toBeNull()) ;
+				}
 				
 				q.close().then(() =>{
 					done() ;
@@ -239,47 +233,41 @@ describe('Search remaining jobs', () => {
 }) ;
 
 describe('Unopened SQLite DB', () => {
-	let q = new Queue(':memory:', 2) ;
+	let q = new Queue({store: ':memory:', batchSize: 2}) ;
 
 	it('should throw on calling start() before open is called', () => {
-		(() => {
+		expect(() => {
 			q.start() ;
-		}).should.throw(Error) ;
+		}).toThrowError(Error) ;
 	}) ;
 
 	it('should throw on calling isEmpty() before open is called', () => {
-		(() => {
+		expect(() => {
 			q.isEmpty() ;
-		}).should.throw(Error) ;
+		}).toThrowError(Error) ;
 	}) ;
 
 	it('should throw on calling getSqlite3() before open is called', () => {
-		(() => {
+		expect(() => {
 			q.getSqlite3() ;
-		}).should.throw(Error) ;
+		}).toThrowError(Error) ;
 	}) ;
 }) ;
 
 describe('Open Errors', () => {
 	it('should reject Promise on no write permissions to db filename', done => {
-		let q = new Queue('/cantwritetome', 2) ;
-		q.open().should.be.rejected() ;
-		done() ;
-	}) ;
-
-	it('should reject Promise when db filename is not a string', done => {
-		let q = new Queue(true, 2) ;
-		q.open().should.be.rejected() ;
+		let q = new Queue({store: '/usr/cantwritetome', batchSize: 2}) ;
+		expect(q.open()).rejects.toThrow() ;
 		done() ;
 	}) ;
 }) ;
 
 describe('Maintaining queue length count', () => {
 	it('should count existing jobs in db on open', done => {
-		let q = new Queue('./test/db2.sqlite') ;
+		let q = new Queue({store: './test/db2.sqlite'}) ;
 		q.open()
 		.then(() => {
-			q.getLength().should.equal(1) ;
+			expect(q.getLength()).toBe(1) ;
 			return q.close() ;
 		})
 		.then(() => {
@@ -292,7 +280,7 @@ describe('Maintaining queue length count', () => {
 
 	it('should count jobs as added and completed', done => {
 		let tmpdb = os.tmpdir() + path.sep + process.pid + '.sqlite' ;
-		let q = new Queue(tmpdb) ;
+		let q = new Queue({store: tmpdb}) ;
 
 		/**
 		 * Count jobs
@@ -301,7 +289,7 @@ describe('Maintaining queue length count', () => {
 		let c = 0 ;
 
 		q.on('add', () => {
-			q.getLength().should.equal(++c) ;
+			expect(q.getLength()).toBe(++c) ;
 		}) ;
 
 		q.open()
@@ -313,20 +301,20 @@ describe('Maintaining queue length count', () => {
 			return q.close() ;
 		})
 		.then(() => {
-			q = new Queue(tmpdb) ;
+			q = new Queue({store: tmpdb}) ;
 
 			return q.open() ;
 		})
 		.then(() => {
-			q.getLength().should.equal(3) ;
+			expect(q.getLength()).toBe(3) ;
 
 			q.on('next', () => {
-				q.getLength().should.equal(c--) ;
+				expect(q.getLength()).toBe(c--) ;
 				q.done() ;
 			}) ;
 
 			q.on('empty', () => {
-				q.getLength().should.equal(0) ;
+				expect(q.getLength()).toBe(0) ;
 				q.close()
 				.then(() => {
 					fs.unlinkSync(tmpdb) ;
@@ -343,29 +331,27 @@ describe('Maintaining queue length count', () => {
 }) ;
 
 describe('Close Errors', () => {
-	let q = new Queue(':memory:') ;
+	let q = new Queue({store: ':memory:'}) ;
 
-	before(done => {
+	beforeAll(done => {
 		q.open()
 		.then(() => {
 			done() ;
 		}) ;
 	}) ;
 
-	it('should close properly', done => {
+	it('should close properly', () => {
 		q.add('1') ;
 
-		q.close().should.be.fulfilled() ;
-		done() ;
+		expect(q.close()).resolves.not.toThrow() ;
 	}) ;
 }) ;
 
 
 describe('Invalid JSON', () => {
 	it('should throw on bad json stored in db', done => {
-		let q = new Queue('./test/db.sqlite', 1) ;
-		q.open()
-		.should.be.rejectedWith(SyntaxError) ;
+		let q = new Queue({store: './test/db.sqlite', batchSize: 1}) ;
+		expect(q.open()).rejects.toThrowError(SyntaxError) ;
 		done() ;
 	}) ;
 }) ;
@@ -374,7 +360,7 @@ describe('Emitters', () => {
 	let q ;
 
 	beforeEach(done => {
-		q = new Queue(':memory:') ;
+		q = new Queue({store: ':memory:'}) ;
 		q.open()
 		.then(() => {
 			done() ;
@@ -396,7 +382,7 @@ describe('Emitters', () => {
 
 	it('should emit add', done => {
 		q.on('add', job => {
-			job.job.should.equal('1') ;
+			expect(job.job).toBe('1') ;
 			done() ;
 		}) ;
 
@@ -404,23 +390,24 @@ describe('Emitters', () => {
 	}) ;
 
 	it('should emit start', done => {
-		let s = sinon.spy() ;
+		const s = jest.fn() ;
 
 		q.on('start', s) ;
 
 		q.start() ;
 
-		s.should.be.calledOnce() ;
-		q.isStarted().should.be.equal(true) ;
+		expect(s).toHaveBeenCalledTimes(1) ;
+		expect(q.isStarted()).toBe(true) ;
 		done() ;
 	}) ;
 
 	it('should emit next when adding after start', done => {
 		q.on('next', job => {
-			job.job.should.equal('1') ;
+			expect(job.job).toBe('1') ;
 			// TODO: q.done() ;
 			q.done() ;
 			done() ;
+			q.stop() ;
 		}) ;
 
 		q.start() ;
@@ -429,9 +416,10 @@ describe('Emitters', () => {
 
 	it('should emit next when adding before start', done => {
 		q.on('next', job => {
-			job.job.should.equal('1') ;
+			expect(job.job).toBe('1') ;
 			q.done() ;
 			done() ;
+			q.stop() ;
 		}) ;
 
 		q.add('1') ;
@@ -442,8 +430,8 @@ describe('Emitters', () => {
 		let empty = 0 ;
 		q.on('empty', () =>{
 			// empty should only emit once
-			(++empty).should.be.equal(1) ;
-			q.getLength().should.equal(0) ;
+			expect(++empty).toBe(1) ;
+			expect(q.getLength()).toBe(0) ;
 			done() ;
 		}) ;
 
@@ -459,8 +447,8 @@ describe('Emitters', () => {
 	it('3 adds before start should emit 3 nexts', done => {
 		let next = 0 ;
 		q.on('empty', () =>{
-			next.should.be.equal(3) ;
-			q.getLength().should.equal(0) ;
+			expect(next).toBe(3) ;
+			expect(q.getLength()).toBe(0) ;
 			done() ;
 		}) ;
 
@@ -478,8 +466,8 @@ describe('Emitters', () => {
 	it('should add 3 jobs and after start should emit 3 nexts', done => {
 		let next = 0 ;
 		q.on('empty', () =>{
-			next.should.be.equal(3) ;
-			q.getLength().should.equal(0) ;
+			expect(next).toBe(3) ;
+			expect(q.getLength()).toBe(0) ;
 			done() ;
 		}) ;
 
@@ -497,8 +485,8 @@ describe('Emitters', () => {
 	it('should start in middle of 3 adds and should emit 3 nexts', done => {
 		let next = 0 ;
 		q.on('empty', () =>{
-			next.should.be.equal(3) ;
-			q.getLength().should.equal(0) ;
+			expect(next).toBe(3) ;
+			expect(q.getLength()).toBe(0) ;
 			done() ;
 		}) ;
 
@@ -516,8 +504,8 @@ describe('Emitters', () => {
 	it('should emit stop', done => {
 		let stop = 0 ;
 		q.on('stop', () =>{
-			(++stop).should.be.equal(1) ;
-			q.isStarted().should.be.equal(false) ;
+			expect(++stop).toBe(1) ;
+			expect(q.isStarted()).toBe(false) ;
 			done() ;
 		}) ;
 
@@ -537,11 +525,11 @@ describe('Emitters', () => {
 	}) ;
 
 	it('should emit open', done => {
-		let q1 = new Queue(':memory:') ;
+		let q1 = new Queue({store: ':memory:'}) ;
 		let open = 0 ;
 		q1.on('open', () => {
-			(++open).should.be.equal(1) ;
-			q1.isOpen().should.be.equal(true) ;
+			expect(++open).toBe(1) ;
+			expect(q1.isOpen()).toBe(true) ;
 			q1.close()
 			.then(() => {
 				done() ;
@@ -551,11 +539,11 @@ describe('Emitters', () => {
 	}) ;
 
 	it('should emit close', done => {
-		let q1 = new Queue(':memory:') ;
+		let q1 = new Queue({store: ':memory:'}) ;
 		let close = 0 ;
 		q1.on('close', () => {
-			(++close).should.be.equal(1) ;
-			q1.isOpen().should.be.equal(false) ;
+			expect(++close).toBe(1) ;
+			expect(q1.isOpen()).toBe(false) ;
 		}) ;
 		q1.open()
 		.then(() => {
@@ -564,5 +552,45 @@ describe('Emitters', () => {
 		.then(() => {
 			done() ;
 		}) ;
+	}) ;
+}) ;
+
+describe('Delay between tasks execution', () => {
+	it('shoud be interval between previous task finish and next task start', (done) => {
+		const afterProcessDelay = 50 ;
+
+		const q = new Queue({store: ':memory:', afterProcessDelay}) ;
+		const delays = [] ;
+		let delay_start ;
+
+		q.on('done', () =>{
+			delay_start = performance.now() ;
+		}) ;
+
+		q.on('next', () => {
+			delays.push(performance.now() - delay_start) ;
+			q.done() ;
+		}) ;
+
+		q.on('empty', () => {
+			delays.shift() ;
+			
+			const average = Math.trunc(delays.reduce((acc, val) => acc+val)/delays.length) ;
+			// It depends on machine CPU load, so it might fail
+			expect(average).toBe(afterProcessDelay) ;
+
+			q.close().then(() => done()) ;
+		}) ;
+
+		q.open().then(() => {
+			q.start() ;
+
+			delay_start = performance.now() ;
+			for(let i = 0 ; i < 10 ; ++i) {
+				let task = {sequence: i} ;
+				q.add(task) ;
+			}
+		}) ;
+
 	}) ;
 }) ;

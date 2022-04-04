@@ -2,7 +2,8 @@
   "name": "node-persistent-queue",
   "version": "1.0.3",
   "description": "Simple SQLite backed Queue for running many short tasks in Node.js event thread",
-  "main": "index.js",
+  "main": "./index.js",
+  "type": "module",
   "keywords": [
     "sqlite",
     "persistent",
@@ -13,10 +14,10 @@
   "bugs": "https://github.com/damoclark/node-persistent-queue/issues",
   "homepage": "https://github.com/damoclark/node-persistent-queue",
   "engines": {
-    "node": ">=6.0.0"
+    "node": ">=16.0.0"
   },
   "scripts": {
-    "test": "mocha"
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest --maxConcurrency 1"
   },
   "author": {
     "name": "Damien Clark",
@@ -24,13 +25,11 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "sqlite3": "^4.0.4"
+    "sqlite3": "^5.0.2"
   },
   "devDependencies": {
     "eslint": "^5.16.0",
-    "mocha": "^5.2.0",
-    "should": "^11.2.1",
-    "should-sinon": "0.0.5",
-    "sinon": "^2.2.0"
+    "jest": "^27.5.1",
+    "jest-environment-node": "^27.5.1"
   }
 }
